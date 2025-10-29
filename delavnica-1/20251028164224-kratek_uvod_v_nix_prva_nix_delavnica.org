@@ -1,0 +1,398 @@
+:PROPERTIES:
+:ID:       6C9FA9F5-F9B1-4B94-9ED1-3DAE13DE8914
+:END:
+#+title: Kratek uvod v Nix - prva nix delavnica 
+#+STARTUP: overview
+#+author: Jure Smolar
+
+[[file:nix-delavnica/nix.png]]
+
+* Kaj je Nix?
+** Funkcijski programski jezik
+Vir: [[https://github.com/crazazy/aoc2020][Advent of Code done in the nix language]]
+
+#+begin_src nix
+
+{ input ? import ./input.nix, elements ? 3}:
+let
+  inherit (builtins) elem foldl' filter head map;
+  inherit (import ../utils.nix) quickElem fix flatten sum product;
+  potentials = fix (f: left: potential:
+    let
+      new = 
+        if potential == [] 
+        then map (x: [x]) input
+        else flatten (map (x: map (y: x ++ [y]) input) potential);
+      newPotential = filter (x: sum x <= 2020) new;
+    in
+    if left <= 0 then potential else f (left - 1) newPotential) elements [];
+  goals = filter (x: sum x == 2020) potentials;
+  output = product (head goals);
+in
+  { inherit goals output potentials; }
+  
+#+end_src
+** [[https://search.nixos.org/packages][Upravljalnik paketov]]
+#+begin_src nix
+
+environment.systemPackages = with pkgs; [
+    prismlauncher
+    jdk8
+    jdk17
+    jdk21
+  ];
+
+#+end_src
+[[file:nix-delavnica/map_repo_size_fresh.svg]]
+** Operacijski sistem
+:PROPERTIES:
+:ID:       10A62762-E92B-43D6-8CE7-5E30FE4C7FDF
+:END:
+
+[[file:nix-delavnica/nixos.png]]
+
+** Kult
+:PROPERTIES:
+:ID:       FC6DDB21-AFC2-4624-9E0C-19A6280D064D
+:END:
+
+[[file:nix-delavnica/kult.png]]
+
+* Problemi tradicionalnega upravljanja paketov
+** Verzijski konflikti
+- Programa =A= in =B= sta odvisna od programa =X=.
+- Program =A= deluje le z verzijo =X<25=.
+- Program =B= le z verzijo =X>27=.
+** "[[https://en.wikipedia.org/wiki/Dependency_hell][Dependency hell]]"
+[[file:nix-delavnica/dependency hell.png]]
+** Strah pred zlomom sistema
+** Težave z reproduciranjem okolja
+Ko dobimo nov računalnik ni trivialno kompletno ponoviti inštalacije.
+* Kaj Nix ponuja
+** Deklarativna konfiguracija
+V =nix.conf= zapišemo seznam paketov, ki jih hočemo imeti naložene ter osnovno konfiguracijo.
+** Reproducibilnost
+** Atomične inštalacije in nadgradnje
+- Vsakič ko kaj spremenimo oz. nadgradimo, sprememba ne povozi prejšnjega stanja.
+- Inštaliran imam =Foo 62= in ga nadgrajujem na =Foo 63=.
+- =Foo 63= se naloži v sistem ločeno od =Foo 62=
+- Ko se inštalacija uspešno zaključi se v ozadju =Foo= symlinka na =Foo 63=
+- Če pride pri inštalaciji do kakršnegakoli problema nikoli ne izgubimo delujoče verzije.
+- V primeru težav lahko kadarkoli gremo nazaj na obstoječo verzijo.
+- Ob priliki počistimo "dangling" pakete.
+** Vrnitev na prejšnje stanje (rollback)
+- Celotno stanje sistema je opisano na enoten način.
+- To pomeni da je ta stanja trivialno shraniti.
+- Po nadgradnji prejšnje inštalacije ostanejo.
+- Zato je trivialno preiti nazaj v starejšo verzijo, če je šlo kaj narobe.
+* Upravljalne opcije
+** [[https://github.com/NixOS/nix][Nix]] (upravljalnik)
+:PROPERTIES:
+:ID:       AB5FE2D1-3559-4164-92BE-FDD0D9A83C8A
+:END:
+- Narejen za upravljanje paketov in razvijalskih okolij.
+- Na voljo ima [[https://repology.org/repositories/graphs][veliko]] paketov.
+** [[https://nixos.org][NixOS]] operacijski sistem
+Poleg konfiguracije naloženih paketov omogoča tudi bolj splošno upravljanje sistema
+#+begin_src nix
+
+hardware.cpu.amd.updateMicrocode = true;
+
+# Use zenpower for power/voltage
+boot.extraModulePackages = with config.boot.kernelPackages; [ 
+  zenpower  # More accurate than k10temp for power/voltage
+];
+boot.blacklistedKernelModules = [ "k10temp" ];
+
+# More aggressive CPU scaling  
+# powerManagement.cpuFreqGovernor = "performance";
+
+# CPU fan detection
+boot.kernelModules = [ "nct6775" "zenpower" ];
+
+# Use the new AMD P-state driver (kernel 5.17+)
+boot.kernelParams = [ 
+  "amd_pstate=guided"
+  #"cpufreq.default_governor=performance"
+  "cpufreq.default_governor=schedutil"
+];
+
+# GPU Config
+hardware.graphics = {
+  enable = true;
+  enable32Bit = true;
+  extraPackages = with pkgs; [ rocmPackages.clr.icd ];
+};
+environment.variables = {
+  ROC_ENABLE_PRE_VEGA = "1";
+};
+
+#+end_src
+
+Trivialno je tudi spreminjanje jedra ter nastavitve le-tega.
+#+begin_src nix
+
+  boot = {
+    kernelPackages = pkgs.linuxPackages_latest; # Update kernel
+    kernelParams = [ 
+      "fbcon=rotate:1" 
+      "video=DSI-1:panel_orientation=right_side_up"
+      "i915.enable_fbc=1"
+      "i915.enable_psr=1"
+      "i915.fastboot=1"
+    ];
+  };
+
+
+#+end_src
+
+** [[https://github.com/nix-darwin/nix-darwin][Nix Darwin]] za macOS
+** [[https://github.com/nix-community/home-manager][Home Manager]] za uporabniške konfiguracije
+#+begin_src nix
+{
+  description = "Home manager configuration";
+
+  inputs = {
+    nixpkgs.url = "nixpkgs/nixos-23.11";
+
+    home-manager = {
+      url = "github:nix-community/home-manager/release-23.11";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    
+  };
+
+  outputs = { nixpkgs, home-manager, ... }:
+    let
+      lib = nixpkgs.lib;
+      system = "x86_64-linux";
+      pkgs = import nixpkgs { inherit system; };
+    in {
+      homeConfigurations = {
+        # Vsak profil ima svoje nastavitve, ki jih lahko razbijemo v module.
+        randy = home-manager.lib.homeManagerConfiguration {
+          inherit pkgs;
+          modules = [ ./home.nix ];
+        };
+        phoebe = { ... };
+        anomaly = { ... };
+      };
+    };
+  }
+
+#+end_src
+
+#+begin_src bash
+home-manager rebuild switch --flake .#randy
+#+end_src
+
+Moč =home-manager=-ja je v tem, da je neodvisen od platforme. To pomeni, da lahko del konfiguracije uporabljamo na NixOS, Nix-darwin, magari tudi na tretji GNU/Linux distribuciji.
+** [[https://github.com/nix-community/nix-on-droid][Nix-on-droid]]
+Eksperimentalen fork Termuxa, ki omogoča dostop do bogatega nixpkgs okolja tudi na androidu.
+** Nix za nintendo wii (Mogoče)
+* Deklarativno upravljanje
+** Configuration as code
+- Reproducibilnost.
+- Samodokumentacija - s tem ko moramo celotno stanje sistema opisati na roke avtomatično obdržimo artefakt muk in nastavitev.
+** /etc/nixos/configuration.nix
+** 
+* NixOS: Osnovna konfiguracija sistema
+** Pregled configuration.nix
+#+begin_src nix
+
+  security.sudo = {
+    enable = true;
+    wheelNeedsPassword = false;
+  };
+ 
+  services.openssh.enable = true;
+
+# virtualisation.virtualbox.guest.enable = true
+
+#+end_src
+** Namestitev paketov
+Pakete dodamo v =environment.systemPackages= ali v user account.
+#+begin_src nix
+
+environment.systemPackages = with pkgs; [
+  emacs
+  git
+];
+
+users.users.jure = {
+  isNormalUser = true;
+  description = "Jure";
+  extraGroups = [ "networkmanager" "wheel" ];
+  packages = with pkgs; [
+    #  thunderbird
+  ];
+};
+
+#+end_src
+** Konfiguracija storitev
+Direktno lahko opišemo tudi storitve (systemd). Primer si bomo pogledali kmalu.
+* NixOS: nixos-rebuild
+** nixos-rebuild build
+** nixos-rebuild switch
+** nixos-rebuild build-vm
+** Pregled generacij in rollback
+#+begin_src bash
+ssh nixvm "sudo nixos-rebuild list-generations"
+#+end_src
+
+#+RESULTS:
+| Generation | Build-date |      NixOS |                   version |                    Kernel | Configuration | Revision | Specialisation |
+|         13 |    current | 2025-10-29 |                  16:04:24 | 25.05.811770.78e34d1667d3 | 6.12.55       | *        |                |
+|         12 | 2025-10-29 |   16:02:39 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|         11 | 2025-10-29 |   10:47:45 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|         10 | 2025-10-29 |   02:17:23 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          9 | 2025-10-29 |   02:08:47 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          8 | 2025-10-29 |   01:34:56 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          7 | 2025-10-29 |   01:32:45 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          6 | 2025-10-29 |   00:47:00 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          5 | 2025-10-29 |   00:38:24 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          4 | 2025-10-29 |   00:32:44 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          3 | 2025-10-28 |   17:14:51 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          2 | 2025-10-28 |   16:48:42 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+|          1 | 2025-10-28 |   16:38:08 | 25.05.811770.78e34d1667d3 |                   6.12.55 | *             |          |                |
+
+#+begin_src bash
+sudo nixos-rebuild switch --rollback
+#+end_src
+
+* NixOS: [[https://wiki.nixos.org/wiki/Minecraft_Server][Minecraft server]]
+#+begin_src nix
+
+  services.minecraft-server = {
+  enable = true;
+  eula = true;
+  openFirewall = true; # Opens the port the server is running on (by default 25565)
+  declarative = true;
+  whitelist = {
+    # This is a mapping from Minecraft usernames to UUIDs. You can use https://mcuuid.net/ to get a Minecraft UUID for a username
+    username1 = "6e0ada9a-2439-4c83-b18f-bc23e1da4178";
+  };
+  serverProperties = {
+    server-port = 25565;
+    difficulty = 3;
+    gamemode = 1;
+    max-players = 5;
+    motd = "NixOS Minecraft server!";
+    white-list = true;
+    allow-cheats = true;
+  };
+  jvmOpts = "-Xms512M -Xmx2048M"; 
+};
+#+end_src
+
+Za nadobudneže obstaja tudi [[https://github.com/Infinidoge/nix-minecraft][nix-minecraft]], ki uporablja flake. Skupaj z [[https://dataswamp.org/~solene/2022-08-20-on-demand-minecraft-with-systemd.html][systemd konfiguracijo]] lahko zaženemo server natanko tedaj, ko je povezan player.
+
+* Bonus: nix-shell
+#+begin_src bash :results output
+ssh nixvm "nix-shell -p figlet --run 'figlet NixOS Workshop. Hello, world!'"
+#+end_src
+
+#+RESULTS:
+#+begin_example
+ _   _ _       ___  ____   __        __         _        _                  
+| \ | (_)_  __/ _ \/ ___|  \ \      / /__  _ __| | _____| |__   ___  _ __   
+|  \| | \ \/ / | | \___ \   \ \ /\ / / _ \| '__| |/ / __| '_ \ / _ \| '_ \  
+| |\  | |>  <| |_| |___) |   \ V  V / (_) | |  |   <\__ \ | | | (_) | |_) | 
+|_| \_|_/_/\_\\___/|____/     \_/\_/ \___/|_|  |_|\_\___/_| |_|\___/| .__(_)
+                                                                    |_|     
+ _   _      _ _                             _     _ _ 
+| | | | ___| | | ___    __      _____  _ __| | __| | |
+| |_| |/ _ \ | |/ _ \   \ \ /\ / / _ \| '__| |/ _` | |
+|  _  |  __/ | | (_) |   \ V  V / (_) | |  | | (_| |_|
+|_| |_|\___|_|_|\___( )   \_/\_/ \___/|_|  |_|\__,_(_)
+                    |/                                
+#+end_example
+
+
+#+begin_src bash :results output
+ssh nixvm "echo '=== Before nix-shell ===' && which python3; nix-shell -p python3 --run 'echo === Inside nix-shell === && which python3 && python3 --version'; echo '=== After nix-shell ===' && which python3"
+#+end_src
+
+#+RESULTS:
+: === Before nix-shell ===
+: === Inside nix-shell ===
+: /nix/store/16x768g8b0f38jxkrswyxjcj8x5msf84-python3-3.12.11/bin/python3
+: Python 3.12.11
+: === After nix-shell ===
+
+#+begin_src bash
+nix-shell -p neofetch --run neofetch
+#+end_src
+
+* /nix/store
+- Immutable paketi
+- Hashiranje in reproducibilnost
+- Symbolic links in profiles
+
+* Generacije sistema
+** Bootloader menu
+** Varno eksperimentiranje
+** Preprosta menjava med window managerji
+Gnome.
+#+begin_src nix
+
+# GNOME
+# Enable the X11 windowing system.
+services.xserver.enable = true;
+
+# Enable the GNOME Desktop Environment.
+services.xserver.displayManager.gdm.enable = true;
+services.xserver.desktopManager.gnome.enable = true;
+
+# Workaround for GNOME autologin: https://github.com/NixOS/nixpkgs/issues/103746#issuecomment-945091229
+systemd.services."getty@tty1".enable = false;
+systemd.services."autovt@tty1".enable = false;
+
+# Funnily enough, the cursor theme always seems to get overwritten
+# dconf reset /org/gnome/desktop/interface/cursor-theme
+
+#+end_src
+
+#+begin_src bash
+ssh nixvm "dconf reset /org/gnome/desktop/interface/cursor-theme"
+#+end_src
+
+#+RESULTS:
+
+#+begin_src nix
+
+# Xfce
+services.xserver = {
+  enable = true;
+  desktopManager = {
+    xterm.enable = false;
+    xfce.enable = true;
+  };
+};
+services.displayManager.defaultSession = "xfce";
+
+
+#+end_src
+
+** Pozor! Še zmeraj lahko zafrčkamo
+#+begin_src bash
+
+[jure@randy:~]$ passwd
+passwd: Cannot determine your user name.
+
+[jure@randy:~]$ sudo -u \#0 /bin/sh
+sudo: you do not exist in the passwd database
+
+[jure@randy:~]$ id
+uid=1000 gid=100(users) groups=100(users),1(wheel),26(video),57(networkmanager)
+
+
+#+end_src
+
+* Primeri uporabe
+** Development okolja (nix-shell)
+** Upravljanje več računalnikov
+** Deljenje konfiguracije (GitHub)
+
+* Hvala za pozornost :^)
+[[file:nix-delavnica/gamga.jpeg]]
